@@ -1,0 +1,151 @@
+---
+title: "Prediction of activity quality from activity monitor data"
+author: "Raymond Wong"
+output: html_document
+---
+
+#####Executive Summary 
+
+In this project, we developed a machine learning model which was able to predict how well an activity (barbell lifts) was performed using data from the activity monitors.
+
+The final model had an accuracy of 0.9973 and accurately predicted how well all 20 activities in the test data set were performed(eg. classe variable).
+
+As this is a computationally intensive project, to avoid excessive running time, only codes of the final model would be presented. Earlier discarded models with higher error rates would only be reported.
+
+#####Environment Setup
+
+The data sets used were obtained from the following url:
+
+The training data: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The above data sets were downloaded and placed in the working directory of this project.
+
+The caret and doParallel (for parrallel processing) packages were used in this project.
+
+```{r echo=FALSE,results='hide'}
+
+library(caret) 
+library(doParallel)
+
+```
+
+
+#####Exploratory data analysis and data cleansing
+
+After loading the training data, we noticed the data set had 19622 rows and 160 columns. 
+
+```{r}
+
+set.seed(50)
+Training <- read.csv("pml-training.csv")
+
+dim(Training)
+
+```
+
+Columns with low variation, more than 25% null values and descriptive columns (eg. serial number, timestamp) were removed from the data set. 
+
+
+```{r}
+
+v.0var <- nearZeroVar(Training)
+
+Training <- Training[, -v.0var]
+
+v.length <- sapply(Training, function(x) {
+    sum(!(is.na(x) | x == ""))
+})
+
+
+v.null.col <- names(v.length[v.length < 0.75 * length(Training$classe)])
+
+Training <- Training[, !names(Training) %in% v.null.col]
+
+str(Training)
+
+Training <- Training[, !names(Training) %in% c("X","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp")]
+
+
+dim(Training)
+
+```
+
+
+#####Model Development
+
+As this was essentially a classification problem, Random Forest function was selected. 
+
+We used cross validation to estimate out of sample error and tune the model. Thus, the training data was subset into training and validation set.
+
+In an earlier attempt, 80% of the training data was set for training and 20% for validation. However, the training data was too large for the capacity of the executing machine. Thus, the training data set was reduced to 60% and validation set to 40% for the final model.
+
+```{r}
+
+# Partition Training set into 40% for validation and 60% for model training
+trainset <- createDataPartition(Training$classe, p = 0.6, list = FALSE)
+Validation <- Training[-trainset, ]
+Training <- Training[trainset, ]
+
+
+```
+
+After data cleansing, the training data set was left with 55 columns, including column to be predicted, classe. To further reduce the dimension of the data set, we preprocess the data using PCA with fitting threshold of 0.95, 0.9 and 0.8. All 3 models have 100% in sample accuracy (eg. 0 in sample error) but the expected out of sample accuracy (eg. 1 - out of sample error) were 0.975, 0.9861 and 0.9505 when validated against the validation data set respectively. The results seem to suggest that at PCA threshold of 0.95, there was overfitting and at 0.8, the fitting was too loose. The model with PCA threshold of 0.9 was used to predict how well activities were performed in the test data set. The prediction was as follow (in order of problem id 1 to 20):
+
+B A A A A E D B A A B C B A E E A B B B
+
+Unfortunately, prediction of A for problem id 3 was incorrect. Thus, we need to further tune the model to get an expected accuracy of higher than 0.9861.
+
+#####Final Model and final result
+
+PCA is a lossy dimension reduction process and some information could be lost in the process. The model was rebuilt without PCA preprocessing. As expected, this model had 0 in sample error. 
+
+```{r, cache=TRUE}
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+
+rfModel <- train(classe ~ ., data=Training, method ="rf")
+
+stopCluster(cl)
+
+train.result <- predict(rfModel,Training)
+
+print(table(train.result,Training$classe ))
+
+```
+
+When validated against the Validation data set, the expected out of sample accuracy was 0.9973
+
+```{r, cache=TRUE}
+
+validation.result <- predict(rfModel,Validation[,-55])
+
+print(confusionMatrix(validation.result,Validation$classe))
+
+```
+
+This model was used to predict how well activities were performed in the test data set again. The prediction was as follow (in order of problem id 1 to 20):
+
+```{r, cache=TRUE}
+
+Testing <- read.csv("pml-testing.csv")
+
+Testing <- Testing[,-v.0var]
+
+Testing <- Testing[, !names(Testing) %in% v.null.col]
+
+Testing <- Testing[, !names(Testing) %in% c("X","raw_timestamp_part_1","raw_timestamp_part_2","cvtd_timestamp")]
+
+test.result <- predict(rfModel,Testing[,-55])
+
+test.result
+
+```
+
+Problem id 3 was correctly predicted as B and the rest of the predictions were consistent with earlier correct predictions. Thus, this model was accepted as the final model.
